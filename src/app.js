@@ -15,16 +15,29 @@ app.use(morgan('dev'));
 app.use(express.json());
 
 // ========== SUPABASE SETUP ==========
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+// Sewing project
+const supabaseUrlSewing = process.env.SUPABASE_URL_SEWING;
+const supabaseKeySewing = process.env.SUPABASE_SERVICE_ROLE_KEY_SEWING;
 
-if (!supabaseUrl || !supabaseServiceKey) {
-  console.error('❌ Missing Supabase environment variables');
+// Upholstery project
+const supabaseUrlUpholstery = process.env.SUPABASE_URL_UPHOLSTERY;
+const supabaseKeyUpholstery = process.env.SUPABASE_SERVICE_ROLE_KEY_UPHOLSTERY;
+
+if (!supabaseUrlSewing || !supabaseKeySewing) {
+  console.error('❌ Missing Sewing Supabase environment variables');
   process.exit(1);
 }
 
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
-console.log('✅ Supabase initialized');
+if (!supabaseUrlUpholstery || !supabaseKeyUpholstery) {
+  console.error('❌ Missing Upholstery Supabase environment variables');
+  process.exit(1);
+}
+
+const supabaseSewing = createClient(supabaseUrlSewing, supabaseKeySewing);
+const supabaseUpholstery = createClient(supabaseUrlUpholstery, supabaseKeyUpholstery);
+
+console.log('✅ Sewing Supabase initialized');
+console.log('✅ Upholstery Supabase initialized');
 
 // ========== HELPER FUNCTIONS ==========
 
@@ -68,12 +81,12 @@ app.get('/api/candidates', async (req, res) => {
   try {
     console.log('📋 Fetching sewing candidates...');
     
-    const { data: publicData, error: publicError } = await supabase
+    const { data: publicData, error: publicError } = await supabaseSewing
       .from('candidates_public')
       .select('*')
       .order('created_at', { ascending: false });
     
-    const { data: privateData } = await supabase
+    const { data: privateData } = await supabaseSewing
       .from('candidates_private')
       .select('candidate_id, postcode')
       .order('created_at', { ascending: false });
@@ -136,13 +149,13 @@ app.get('/api/candidates/:id', async (req, res) => {
   try {
     console.log(`📋 Fetching sewing candidate: ${req.params.id}`);
     
-    const { data: publicData, error: publicError } = await supabase
+    const { data: publicData, error: publicError } = await supabaseSewing
       .from('candidates_public')
       .select('*')
       .eq('candidate_id', req.params.id)
       .single();
     
-    const { data: privateData } = await supabase
+    const { data: privateData } = await supabaseSewing
       .from('candidates_private')
       .select('candidate_id, postcode')
       .eq('candidate_id', req.params.id)
@@ -197,7 +210,7 @@ app.get('/api/upholstery', async (req, res) => {
   try {
     console.log('📋 Fetching upholstery candidates...');
     
-    const { data, error } = await supabase
+    const { data, error } = await supabaseUpholstery
       .from('upholstery_public')
       .select('*')
       .order('created_at', { ascending: false });
@@ -246,7 +259,7 @@ app.get('/api/upholstery/:id', async (req, res) => {
   try {
     console.log(`📋 Fetching upholstery candidate: ${req.params.id}`);
     
-    const { data, error } = await supabase
+    const { data, error } = await supabaseUpholstery
       .from('upholstery_public')
       .select('*')
       .eq('id', req.params.id)
