@@ -119,8 +119,9 @@ app.get('/api/candidates', async (req, res) => {
         candidateId: c.candidate_id,
         role: c.job_title,
         location: c.city,
+        postcode: privateRecord?.postcode,
         postcodeDistrict: postcodeDistrict,
-        coordinates: coordinates,
+        postcodeCoords: coordinates,
         yearsExperience: c.years_experience,
         availability: c.status || 'Unknown',
         sector: c.sector,
@@ -181,8 +182,9 @@ app.get('/api/candidates/:id', async (req, res) => {
       candidateId: publicData.candidate_id,
       role: publicData.job_title,
       location: publicData.city,
+      postcode: privateData?.postcode,
       postcodeDistrict: postcodeDistrict,
-      coordinates: coordinates,
+      postcodeCoords: coordinates,
       yearsExperience: publicData.years_experience,
       availability: publicData.status || 'Unknown',
       sector: publicData.sector,
@@ -210,39 +212,62 @@ app.get('/api/upholstery', async (req, res) => {
   try {
     console.log('📋 Fetching upholstery candidates...');
     
-    const { data, error } = await supabaseUpholstery
+    const { data: publicData, error: publicError } = await supabaseUpholstery
       .from('upholstery_public')
       .select('*')
       .order('created_at', { ascending: false });
+    
+    const { data: privateData } = await supabaseUpholstery
+      .from('upholstery_private')
+      .select('candidate_id, postcode')
+      .order('created_at', { ascending: false });
 
-    if (error) {
-      console.error('❌ Error:', error);
-      return res.status(400).json({ error: error.message });
+    if (publicError) {
+      console.error('❌ Error:', publicError);
+      return res.status(400).json({ error: publicError.message });
     }
 
-    if (!data || data.length === 0) {
+    if (!publicData || publicData.length === 0) {
       return res.json([]);
     }
 
-    const candidates = data.map(c => ({
-      id: c.id,
-      candidateId: c.candidate_id,
-      role: c.job_title || 'Upholsterer',
-      location: c.city || '',
-      yearsExperience: c.years_experience || 'Not specified',
-      availability: c.status || 'Not specified',
-      noticePeriod: c.availability || 'Not specified',
-      sector: c.sector || 'Upholstery',
-      workType: c.work_type || 'Not specified',
-      travelDistance: c.travel_distance || 'Not specified',
-      driversLicense: c.drivers_license || 'Not specified',
-      ownVehicle: c.own_vehicle || 'Not specified',
-      products: c.products ? (Array.isArray(c.products) ? c.products : c.products.split(',').map(s => s.trim())) : [],
-      techniques: c.techniques ? (Array.isArray(c.techniques) ? c.techniques : c.techniques.split(',').map(s => s.trim())) : [],
-      sewingMachineExperience: c.sewing_machine_experience || 'None',
-      sewingMachines: c.sewing_machines_used ? c.sewing_machines_used.split(', ') : [],
-      willingToRelocate: c.willing_to_relocate || 'Not specified',
-      type: 'upholstery'
+    const candidates = await Promise.all(publicData.map(async (c) => {
+      const privateRecord = privateData?.find(p => p.candidate_id === c.candidate_id);
+      
+      let coordinates = null;
+      let postcodeDistrict = null;
+      
+      if (privateRecord?.postcode) {
+        const coords = await getCoordinatesFromPostcode(privateRecord.postcode);
+        if (coords) {
+          coordinates = { lat: coords.lat, lon: coords.lon };
+          postcodeDistrict = coords.postcodeDistrict;
+        }
+      }
+      
+      return {
+        id: c.id,
+        candidateId: c.candidate_id,
+        role: c.job_title || 'Upholsterer',
+        location: c.city || '',
+        postcode: privateRecord?.postcode,
+        postcodeDistrict: postcodeDistrict,
+        postcodeCoords: coordinates,
+        yearsExperience: c.years_experience || 'Not specified',
+        availability: c.status || 'Not specified',
+        noticePeriod: c.availability || 'Not specified',
+        sector: c.sector || 'Upholstery',
+        workType: c.work_type || 'Not specified',
+        travelDistance: c.travel_distance || 'Not specified',
+        driversLicense: c.drivers_license || 'Not specified',
+        ownVehicle: c.own_vehicle || 'Not specified',
+        products: c.products ? (Array.isArray(c.products) ? c.products : c.products.split(',').map(s => s.trim())) : [],
+        techniques: c.techniques ? (Array.isArray(c.techniques) ? c.techniques : c.techniques.split(',').map(s => s.trim())) : [],
+        sewingMachineExperience: c.sewing_machine_experience || 'None',
+        sewingMachines: c.sewing_machines_used ? c.sewing_machines_used.split(', ') : [],
+        willingToRelocate: c.willing_to_relocate || 'Not specified',
+        type: 'upholstery'
+      };
     }));
 
     console.log(`✅ Found ${candidates.length} upholstery candidates`);
@@ -259,34 +284,54 @@ app.get('/api/upholstery/:id', async (req, res) => {
   try {
     console.log(`📋 Fetching upholstery candidate: ${req.params.id}`);
     
-    const { data, error } = await supabaseUpholstery
+    const { data: publicData, error: publicError } = await supabaseUpholstery
       .from('upholstery_public')
       .select('*')
-      .eq('id', req.params.id)
+      .eq('candidate_id', req.params.id)
+      .single();
+    
+    const { data: privateData } = await supabaseUpholstery
+      .from('upholstery_private')
+      .select('candidate_id, postcode')
+      .eq('candidate_id', req.params.id)
       .single();
 
-    if (error) {
+    if (publicError) {
       return res.status(404).json({ error: 'Candidate not found' });
     }
 
+    let coordinates = null;
+    let postcodeDistrict = null;
+    
+    if (privateData?.postcode) {
+      const coords = await getCoordinatesFromPostcode(privateData.postcode);
+      if (coords) {
+        coordinates = { lat: coords.lat, lon: coords.lon };
+        postcodeDistrict = coords.postcodeDistrict;
+      }
+    }
+
     const candidate = {
-      id: data.id,
-      candidateId: data.candidate_id,
-      role: data.job_title || 'Upholsterer',
-      location: data.city || '',
-      yearsExperience: data.years_experience || 'Not specified',
-      availability: data.status || 'Not specified',
-      noticePeriod: data.availability || 'Not specified',
-      sector: data.sector || 'Upholstery',
-      workType: data.work_type || 'Not specified',
-      travelDistance: data.travel_distance || 'Not specified',
-      driversLicense: data.drivers_license || 'Not specified',
-      ownVehicle: data.own_vehicle || 'Not specified',
-      products: data.products ? (Array.isArray(data.products) ? data.products : data.products.split(',').map(s => s.trim())) : [],
-      techniques: data.techniques ? (Array.isArray(data.techniques) ? data.techniques : data.techniques.split(',').map(s => s.trim())) : [],
-      sewingMachineExperience: data.sewing_machine_experience || 'None',
-      sewingMachines: data.sewing_machines_used ? data.sewing_machines_used.split(', ') : [],
-      willingToRelocate: data.willing_to_relocate || 'Not specified',
+      id: publicData.id,
+      candidateId: publicData.candidate_id,
+      role: publicData.job_title || 'Upholsterer',
+      location: publicData.city || '',
+      postcode: privateData?.postcode,
+      postcodeDistrict: postcodeDistrict,
+      postcodeCoords: coordinates,
+      yearsExperience: publicData.years_experience || 'Not specified',
+      availability: publicData.status || 'Not specified',
+      noticePeriod: publicData.availability || 'Not specified',
+      sector: publicData.sector || 'Upholstery',
+      workType: publicData.work_type || 'Not specified',
+      travelDistance: publicData.travel_distance || 'Not specified',
+      driversLicense: publicData.drivers_license || 'Not specified',
+      ownVehicle: publicData.own_vehicle || 'Not specified',
+      products: publicData.products ? (Array.isArray(publicData.products) ? publicData.products : publicData.products.split(',').map(s => s.trim())) : [],
+      techniques: publicData.techniques ? (Array.isArray(publicData.techniques) ? publicData.techniques : publicData.techniques.split(',').map(s => s.trim())) : [],
+      sewingMachineExperience: publicData.sewing_machine_experience || 'None',
+      sewingMachines: publicData.sewing_machines_used ? publicData.sewing_machines_used.split(', ') : [],
+      willingToRelocate: publicData.willing_to_relocate || 'Not specified',
       type: 'upholstery'
     };
 
