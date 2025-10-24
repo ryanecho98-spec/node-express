@@ -1,23 +1,23 @@
 {
-	"name": "node-express-starter",
-	"version": "1.0.0",
-	"description": "A Node.js Express starter template with basic setup configuration.",
-	"main": "index.js",
-	"author": "vimode",
-	"license": "MIT",
-	"type": "module",
-	"scripts": {
-		"dev": "nodemon src/index.js",
-		"start": "node src/index.js"
-	},
-	"dependencies": {
-		"@supabase/supabase-js": "^2.48.0",
-		"cors": "^2.8.5",
-		"dotenv": "^16.4.7",
-		"express": "^4.21.2",
-		"morgan": "^1.10.0"
-	},
-	"devDependencies": {
-		"nodemon": "^3.1.9"
-	}
+  "name": "node-express-starter",
+  "version": "1.0.0",
+  "description": "A Node.js Express starter template with Supabase integration.",
+  "main": "src/index.js",
+  "author": "ryanecho98",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "nodemon src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.48.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "morgan": "^1.10.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  }
 }
