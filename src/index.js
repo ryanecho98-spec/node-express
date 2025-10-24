@@ -5,7 +5,12 @@ const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
   console.log(`\n✅ Server running at http://localhost:${PORT}`);
-  console.log(`📋 API: http://localhost:${PORT}/api/candidates`);
-  console.log(`🏥 Health: http://localhost:${PORT}/health\n`);
+  console.log(`\n📍 SEWING CANDIDATES:`);
+  console.log(`   GET http://localhost:${PORT}/api/candidates`);
+  console.log(`   GET http://localhost:${PORT}/api/candidates/:id`);
+  console.log(`\n🛋️  UPHOLSTERY CANDIDATES:`);
+  console.log(`   GET http://localhost:${PORT}/api/upholstery`);
+  console.log(`   GET http://localhost:${PORT}/api/upholstery/:id`);
+  console.log(`\n🏥 Health Check:`);
+  console.log(`   GET http://localhost:${PORT}/health\n`);
 });
-
