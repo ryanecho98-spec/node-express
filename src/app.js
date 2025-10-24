@@ -9,28 +9,25 @@ dotenv.config();
 
 const app = express();
 
-// Middleware
+// ========== MIDDLEWARE ==========
 app.use(cors());
 app.use(morgan('dev'));
 app.use(express.json());
 
-// Supabase setup
+// ========== SUPABASE SETUP ==========
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!supabaseUrl || !supabaseServiceKey) {
   console.error('❌ Missing Supabase environment variables');
-  console.error('Make sure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are set');
   process.exit(1);
 }
 
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
 console.log('✅ Supabase initialized');
 
 // ========== HELPER FUNCTIONS ==========
 
-// Convert postcode to coordinates using postcodes.io API
 async function getCoordinatesFromPostcode(postcode) {
   if (!postcode) return null;
   
@@ -43,7 +40,7 @@ async function getCoordinatesFromPostcode(postcode) {
       return {
         lat: data.result.latitude,
         lon: data.result.longitude,
-        postcodeDistrict: data.result.outward_code // e.g., "M1", "B15"
+        postcodeDistrict: data.result.outward_code
       };
     }
   } catch (error) {
@@ -64,50 +61,42 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Get all candidates with coordinates (no postcode exposed)
+// ========== SEWING CANDIDATES ==========
+
+// Get all sewing candidates
 app.get('/api/candidates', async (req, res) => {
   try {
-    console.log('📋 Fetching candidates from Supabase...');
+    console.log('📋 Fetching sewing candidates...');
     
-    // Fetch public candidate data
     const { data: publicData, error: publicError } = await supabase
       .from('candidates_public')
       .select('*')
       .order('created_at', { ascending: false });
     
-    // Fetch private postcode data (NOT exposed to frontend)
-    const { data: privateData, error: privateError } = await supabase
+    const { data: privateData } = await supabase
       .from('candidates_private')
       .select('candidate_id, postcode')
       .order('created_at', { ascending: false });
 
     if (publicError) {
-      console.error('❌ Supabase public error:', publicError);
+      console.error('❌ Error:', publicError);
       return res.status(400).json({ error: publicError.message });
     }
 
     if (!publicData || publicData.length === 0) {
-      console.log('⚠️ No candidates found');
       return res.json([]);
     }
 
-    console.log(`✅ Found ${publicData.length} public candidates`);
-
-    // Convert postcodes to coordinates
     const candidates = await Promise.all(publicData.map(async (c) => {
       const privateRecord = privateData?.find(p => p.candidate_id === c.candidate_id);
       
       let coordinates = null;
       let postcodeDistrict = null;
       
-      // Get coordinates from postcode if available
       if (privateRecord?.postcode) {
         const coords = await getCoordinatesFromPostcode(privateRecord.postcode);
         if (coords) {
-          coordinates = {
-            lat: coords.lat,
-            lon: coords.lon
-          };
+          coordinates = { lat: coords.lat, lon: coords.lon };
           postcodeDistrict = coords.postcodeDistrict;
         }
       }
@@ -117,8 +106,8 @@ app.get('/api/candidates', async (req, res) => {
         candidateId: c.candidate_id,
         role: c.job_title,
         location: c.city,
-        postcodeDistrict: postcodeDistrict, // e.g., "M1" - safe to expose
-        coordinates: coordinates, // lat/lon only - postcode NOT exposed
+        postcodeDistrict: postcodeDistrict,
+        coordinates: coordinates,
         yearsExperience: c.years_experience,
         availability: c.status || 'Unknown',
         sector: c.sector,
@@ -128,54 +117,48 @@ app.get('/api/candidates', async (req, res) => {
         materials: c.materials ? c.materials.split(',').map(m => m.trim()).filter(m => m && m !== 'None selected') : [],
         sewingTechniques: c.sewing_techniques ? c.sewing_techniques.split(',').map(t => t.trim()).filter(t => t && t !== 'None selected') : [],
         desiredSalary: c.desired_salary || 'Competitive',
-        travelDistance: c.travel_distance
+        travelDistance: c.travel_distance,
+        type: 'sewing'
       };
     }));
 
-    console.log(`📤 Returning ${candidates.length} candidates with coordinates`);
+    console.log(`✅ Found ${candidates.length} sewing candidates`);
     res.json(candidates);
 
   } catch (error) {
-    console.error('🔴 Error in /api/candidates:', error);
-    res.status(500).json({ error: 'Failed to fetch candidates', details: error.message });
+    console.error('🔴 Error:', error);
+    res.status(500).json({ error: 'Failed to fetch sewing candidates' });
   }
 });
 
-// Get single candidate by ID with coordinates (no postcode exposed)
+// Get single sewing candidate
 app.get('/api/candidates/:id', async (req, res) => {
   try {
-    console.log(`📋 Fetching candidate: ${req.params.id}`);
+    console.log(`📋 Fetching sewing candidate: ${req.params.id}`);
     
-    // Fetch public data
     const { data: publicData, error: publicError } = await supabase
       .from('candidates_public')
       .select('*')
       .eq('candidate_id', req.params.id)
       .single();
     
-    // Fetch private postcode data
-    const { data: privateData, error: privateError } = await supabase
+    const { data: privateData } = await supabase
       .from('candidates_private')
       .select('candidate_id, postcode')
       .eq('candidate_id', req.params.id)
       .single();
 
     if (publicError) {
-      console.error('Error:', publicError);
       return res.status(404).json({ error: 'Candidate not found' });
     }
 
     let coordinates = null;
     let postcodeDistrict = null;
     
-    // Get coordinates from postcode
     if (privateData?.postcode) {
       const coords = await getCoordinatesFromPostcode(privateData.postcode);
       if (coords) {
-        coordinates = {
-          lat: coords.lat,
-          lon: coords.lon
-        };
+        coordinates = { lat: coords.lat, lon: coords.lon };
         postcodeDistrict = coords.postcodeDistrict;
       }
     }
@@ -196,7 +179,8 @@ app.get('/api/candidates/:id', async (req, res) => {
       materials: publicData.materials ? publicData.materials.split(',').map(m => m.trim()).filter(m => m && m !== 'None selected') : [],
       sewingTechniques: publicData.sewing_techniques ? publicData.sewing_techniques.split(',').map(t => t.trim()).filter(t => t && t !== 'None selected') : [],
       desiredSalary: publicData.desired_salary || 'Competitive',
-      travelDistance: publicData.travel_distance
+      travelDistance: publicData.travel_distance,
+      type: 'sewing'
     };
 
     res.json(candidate);
@@ -206,20 +190,115 @@ app.get('/api/candidates/:id', async (req, res) => {
   }
 });
 
-// 404 handler
+// ========== UPHOLSTERY CANDIDATES ==========
+
+// Get all upholstery candidates
+app.get('/api/upholstery', async (req, res) => {
+  try {
+    console.log('📋 Fetching upholstery candidates...');
+    
+    const { data, error } = await supabase
+      .from('upholstery_public')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('❌ Error:', error);
+      return res.status(400).json({ error: error.message });
+    }
+
+    if (!data || data.length === 0) {
+      return res.json([]);
+    }
+
+    const candidates = data.map(c => ({
+      id: c.id,
+      candidateId: c.candidate_id,
+      role: c.job_title || 'Upholsterer',
+      location: c.city || '',
+      yearsExperience: c.years_experience || 'Not specified',
+      availability: c.status || 'Not specified',
+      noticePeriod: c.availability || 'Not specified',
+      sector: c.sector || 'Upholstery',
+      workType: c.work_type || 'Not specified',
+      travelDistance: c.travel_distance || 'Not specified',
+      driversLicense: c.drivers_license || 'Not specified',
+      ownVehicle: c.own_vehicle || 'Not specified',
+      products: c.products ? (Array.isArray(c.products) ? c.products : c.products.split(',').map(s => s.trim())) : [],
+      techniques: c.techniques ? (Array.isArray(c.techniques) ? c.techniques : c.techniques.split(',').map(s => s.trim())) : [],
+      sewingMachineExperience: c.sewing_machine_experience || 'None',
+      sewingMachines: c.sewing_machines_used ? c.sewing_machines_used.split(', ') : [],
+      willingToRelocate: c.willing_to_relocate || 'Not specified',
+      type: 'upholstery'
+    }));
+
+    console.log(`✅ Found ${candidates.length} upholstery candidates`);
+    res.json(candidates);
+
+  } catch (error) {
+    console.error('🔴 Error:', error);
+    res.status(500).json({ error: 'Failed to fetch upholstery candidates' });
+  }
+});
+
+// Get single upholstery candidate
+app.get('/api/upholstery/:id', async (req, res) => {
+  try {
+    console.log(`📋 Fetching upholstery candidate: ${req.params.id}`);
+    
+    const { data, error } = await supabase
+      .from('upholstery_public')
+      .select('*')
+      .eq('id', req.params.id)
+      .single();
+
+    if (error) {
+      return res.status(404).json({ error: 'Candidate not found' });
+    }
+
+    const candidate = {
+      id: data.id,
+      candidateId: data.candidate_id,
+      role: data.job_title || 'Upholsterer',
+      location: data.city || '',
+      yearsExperience: data.years_experience || 'Not specified',
+      availability: data.status || 'Not specified',
+      noticePeriod: data.availability || 'Not specified',
+      sector: data.sector || 'Upholstery',
+      workType: data.work_type || 'Not specified',
+      travelDistance: data.travel_distance || 'Not specified',
+      driversLicense: data.drivers_license || 'Not specified',
+      ownVehicle: data.own_vehicle || 'Not specified',
+      products: data.products ? (Array.isArray(data.products) ? data.products : data.products.split(',').map(s => s.trim())) : [],
+      techniques: data.techniques ? (Array.isArray(data.techniques) ? data.techniques : data.techniques.split(',').map(s => s.trim())) : [],
+      sewingMachineExperience: data.sewing_machine_experience || 'None',
+      sewingMachines: data.sewing_machines_used ? data.sewing_machines_used.split(', ') : [],
+      willingToRelocate: data.willing_to_relocate || 'Not specified',
+      type: 'upholstery'
+    };
+
+    res.json(candidate);
+  } catch (error) {
+    console.error('Error:', error);
+    res.status(500).json({ error: 'Failed to fetch candidate' });
+  }
+});
+
+// ========== 404 HANDLER ==========
 app.use((req, res) => {
   res.status(404).json({ 
     error: 'Not Found',
-    message: `Route ${req.method} ${req.path} does not exist`,
     availableRoutes: [
       'GET /health',
-      'GET /api/candidates',
-      'GET /api/candidates/:id'
+      'GET /api/candidates - All sewing candidates',
+      'GET /api/candidates/:id - Single sewing candidate',
+      'GET /api/upholstery - All upholstery candidates',
+      'GET /api/upholstery/:id - Single upholstery candidate'
     ]
   });
 });
 
-// Error handler
+// ========== ERROR HANDLER ==========
 app.use((err, req, res, next) => {
   console.error('🔴 Unhandled error:', err);
   res.status(500).json({ 
