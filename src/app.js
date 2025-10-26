@@ -3,11 +3,14 @@ import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
+import jwt from 'jsonwebtoken';
+import bcryptjs from 'bcryptjs';
 import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
 
 const app = express();
+const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-key-change-this';
 
 // ========== MIDDLEWARE ==========
 app.use(cors());
@@ -63,15 +66,164 @@ async function getCoordinatesFromPostcode(postcode) {
   return null;
 }
 
-// ========== ROUTES ==========
+// Verify JWT Token Middleware
+function verifyToken(req, res, next) {
+  try {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
 
-// Health check
+    if (!token) {
+      return res.status(401).json({ error: 'No token provided' });
+    }
+
+    jwt.verify(token, JWT_SECRET, (err, decoded) => {
+      if (err) {
+        return res.status(403).json({ error: 'Invalid or expired token' });
+      }
+      req.user = decoded;
+      next();
+    });
+  } catch (error) {
+    return res.status(500).json({ error: 'Token verification error' });
+  }
+}
+
+// ========== HEALTH CHECK ==========
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'production'
   });
+});
+
+// ========== LOGIN ENDPOINTS ==========
+
+app.post('/api/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password required' });
+    }
+
+    console.log(`🔐 Login attempt for: ${email}`);
+
+    // Try Sewing Supabase first
+    let loginResult = await loginToDatabase(email, password, supabaseSewing, 'sewing');
+
+    // If not found in sewing, try Upholstery
+    if (!loginResult.success) {
+      console.log(`📋 Not in Sewing, trying Upholstery...`);
+      loginResult = await loginToDatabase(email, password, supabaseUpholstery, 'upholstery');
+    }
+
+    if (!loginResult.success) {
+      console.log(`❌ Login failed for ${email}`);
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    // Create JWT token
+    const token = jwt.sign(
+      {
+        id: loginResult.candidateId,
+        email: loginResult.email,
+        accountType: loginResult.accountType,
+        unifiedId: loginResult.unifiedId,
+      },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    console.log(`✅ Login successful for ${email} (${loginResult.accountType})`);
+
+    return res.json({
+      token,
+      candidateId: loginResult.candidateId,
+      email: loginResult.email,
+      accountType: loginResult.accountType,
+      unifiedId: loginResult.unifiedId,
+    });
+  } catch (error) {
+    console.error('❌ Login error:', error);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+async function loginToDatabase(email, password, supabase, dbType) {
+  try {
+    const { data, error } = await supabase
+      .from('unified_auth')
+      .select('*')
+      .eq('email', email)
+      .eq('is_active', true)
+      .single();
+
+    if (error || !data) {
+      return { success: false };
+    }
+
+    const passwordMatch = await bcryptjs.compare(password, data.password_hash);
+
+    if (!passwordMatch) {
+      console.log(`⚠️  Password mismatch for ${email}`);
+      return { success: false };
+    }
+
+    let candidateId;
+    if (dbType === 'sewing') {
+      candidateId = data.sewing_candidate_id;
+    } else {
+      candidateId = data.upholstery_candidate_id;
+    }
+
+    await supabase
+      .from('unified_auth')
+      .update({ last_login: new Date().toISOString() })
+      .eq('email', email);
+
+    return {
+      success: true,
+      email: data.email,
+      candidateId: candidateId,
+      unifiedId: data.unified_id,
+      accountType: data.account_type,
+    };
+  } catch (error) {
+    console.error(`Error logging into ${dbType} database:`, error);
+    return { success: false };
+  }
+}
+
+// Get Profile (Protected Route)
+app.get('/api/profile', verifyToken, async (req, res) => {
+  try {
+    const { accountType, unifiedId } = req.user;
+    const supabase = accountType === 'sewing' ? supabaseSewing : supabaseUpholstery;
+
+    const { data, error } = await supabase
+      .from('unified_auth')
+      .select('*')
+      .eq('unified_id', unifiedId)
+      .single();
+
+    if (error || !data) {
+      return res.status(404).json({ error: 'Profile not found' });
+    }
+
+    return res.json({
+      profile: {
+        email: data.email,
+        unifiedId: data.unified_id,
+        accountType: data.account_type,
+        lastLogin: data.last_login,
+        isActive: data.is_active,
+      },
+    });
+  } catch (error) {
+    console.error('Profile fetch error:', error);
+    return res.status(500).json({ error: 'Server error' });
+  }
 });
 
 // ========== SEWING CANDIDATES ==========
@@ -344,6 +496,8 @@ app.use((req, res) => {
     error: 'Not Found',
     availableRoutes: [
       'GET /health',
+      'POST /api/login - Login with email/password',
+      'GET /api/profile - Get profile (requires token)',
       'GET /api/candidates - All sewing candidates',
       'GET /api/candidates/:id - Single sewing candidate',
       'GET /api/upholstery - All upholstery candidates',
