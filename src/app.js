@@ -3,14 +3,11 @@ import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
-import jwt from 'jsonwebtoken';
-import bcryptjs from 'bcryptjs';
 import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
 
 const app = express();
-const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-key-change-this';
 
 // ========== MIDDLEWARE ==========
 app.use(cors());
@@ -66,8 +63,8 @@ async function getCoordinatesFromPostcode(postcode) {
   return null;
 }
 
-// Verify JWT Token Middleware
-function verifyToken(req, res, next) {
+// Verify Supabase Token Middleware
+async function verifySupabaseToken(req, res, next) {
   try {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -77,15 +74,36 @@ function verifyToken(req, res, next) {
       return res.status(401).json({ error: 'No token provided' });
     }
 
-    jwt.verify(token, JWT_SECRET, (err, decoded) => {
-      if (err) {
-        console.warn('⚠️ Invalid token:', err.message);
-        return res.status(403).json({ error: 'Invalid or expired token' });
+    // Verify token with Supabase (try both projects)
+    let user = null;
+    let supabaseClient = null;
+
+    // Try Sewing first
+    const { data: sewingUser, error: sewingError } = await supabaseSewing.auth.getUser(token);
+    if (sewingUser?.user) {
+      user = sewingUser.user;
+      supabaseClient = supabaseSewing;
+      console.log('✅ Token verified with Sewing Supabase');
+    } else if (!sewingError) {
+      // Try Upholstery
+      const { data: upholsteryUser, error: upholsteryError } = await supabaseUpholstery.auth.getUser(token);
+      if (upholsteryUser?.user) {
+        user = upholsteryUser.user;
+        supabaseClient = supabaseUpholstery;
+        console.log('✅ Token verified with Upholstery Supabase');
       }
-      req.user = decoded;
-      next();
-    });
+    }
+
+    if (!user) {
+      console.warn('⚠️ Invalid or expired token');
+      return res.status(403).json({ error: 'Invalid or expired token' });
+    }
+
+    req.user = user;
+    req.supabase = supabaseClient;
+    next();
   } catch (error) {
+    console.error('Token verification error:', error);
     return res.status(500).json({ error: 'Token verification error' });
   }
 }
@@ -101,6 +119,7 @@ app.get('/health', (req, res) => {
 
 // ========== LOGIN ENDPOINTS ==========
 
+// Login with email/password (using Supabase Auth)
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -112,12 +131,12 @@ app.post('/api/login', async (req, res) => {
     console.log(`🔐 Login attempt for: ${email}`);
 
     // Try Sewing Supabase first
-    let loginResult = await loginToDatabase(email, password, supabaseSewing, 'sewing');
+    let loginResult = await loginToSupabase(email, password, supabaseSewing, 'sewing');
 
     // If not found in sewing, try Upholstery
     if (!loginResult.success) {
       console.log(`📋 Not in Sewing, trying Upholstery...`);
-      loginResult = await loginToDatabase(email, password, supabaseUpholstery, 'upholstery');
+      loginResult = await loginToSupabase(email, password, supabaseUpholstery, 'upholstery');
     }
 
     if (!loginResult.success) {
@@ -125,26 +144,16 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    // Create JWT token
-    const token = jwt.sign(
-      {
-        id: loginResult.candidateId,
-        email: loginResult.email,
-        accountType: loginResult.accountType,
-        unifiedId: loginResult.unifiedId,
-      },
-      JWT_SECRET,
-      { expiresIn: '7d' }
-    );
-
     console.log(`✅ Login successful for ${email} (${loginResult.accountType})`);
 
     return res.json({
-      token,
-      candidateId: loginResult.candidateId,
-      email: loginResult.email,
-      accountType: loginResult.accountType,
-      unifiedId: loginResult.unifiedId,
+      token: loginResult.session.access_token,
+      user: {
+        id: loginResult.user.id,
+        email: loginResult.user.email,
+        accountType: loginResult.accountType,
+      },
+      expiresIn: loginResult.session.expires_in,
     });
   } catch (error) {
     console.error('❌ Login error:', error);
@@ -152,74 +161,40 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-async function loginToDatabase(email, password, supabase, dbType) {
+async function loginToSupabase(email, password, supabase, dbType) {
   try {
-    const { data, error } = await supabase
-      .from('unified_auth')
-      .select('*')
-      .eq('email', email)
-      .eq('is_active', true)
-      .single();
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
 
-    if (error || !data) {
+    if (error || !data.user) {
+      console.log(`⚠️ Login failed for ${email} on ${dbType}`);
       return { success: false };
     }
-
-    const passwordMatch = await bcryptjs.compare(password, data.password_hash);
-
-    if (!passwordMatch) {
-      console.log(`⚠️  Password mismatch for ${email}`);
-      return { success: false };
-    }
-
-    let candidateId;
-    if (dbType === 'sewing') {
-      candidateId = data.sewing_candidate_id;
-    } else {
-      candidateId = data.upholstery_candidate_id;
-    }
-
-    await supabase
-      .from('unified_auth')
-      .update({ last_login: new Date().toISOString() })
-      .eq('email', email);
 
     return {
       success: true,
-      email: data.email,
-      candidateId: candidateId,
-      unifiedId: data.unified_id,
-      accountType: data.account_type,
+      user: data.user,
+      session: data.session,
+      accountType: dbType,
     };
   } catch (error) {
-    console.error(`Error logging into ${dbType} database:`, error);
+    console.error(`Error logging into ${dbType} Supabase:`, error);
     return { success: false };
   }
 }
 
 // Get Profile (Protected Route)
-app.get('/api/profile', verifyToken, async (req, res) => {
+app.get('/api/profile', verifySupabaseToken, async (req, res) => {
   try {
-    const { accountType, unifiedId } = req.user;
-    const supabase = accountType === 'sewing' ? supabaseSewing : supabaseUpholstery;
-
-    const { data, error } = await supabase
-      .from('unified_auth')
-      .select('*')
-      .eq('unified_id', unifiedId)
-      .single();
-
-    if (error || !data) {
-      return res.status(404).json({ error: 'Profile not found' });
-    }
+    const user = req.user;
 
     return res.json({
       profile: {
-        email: data.email,
-        unifiedId: data.unified_id,
-        accountType: data.account_type,
-        lastLogin: data.last_login,
-        isActive: data.is_active,
+        id: user.id,
+        email: user.email,
+        createdAt: user.created_at,
       },
     });
   } catch (error) {
@@ -230,8 +205,8 @@ app.get('/api/profile', verifyToken, async (req, res) => {
 
 // ========== SEWING CANDIDATES ==========
 
-// Get all sewing candidates (PROTECTED)
-app.get('/api/candidates', verifyToken, async (req, res) => {
+// Get all sewing candidates (PUBLIC)
+app.get('/api/candidates', async (req, res) => {
   try {
     console.log('📋 Fetching sewing candidates for user:', req.user.email);
     
@@ -250,7 +225,7 @@ app.get('/api/candidates', verifyToken, async (req, res) => {
       return res.status(400).json({ error: publicError.message });
     }
 
-    if (!publicData || publicData.length === 0) {
+    if (!Array.isArray(publicData) || publicData.length === 0) {
       return res.json([]);
     }
 
@@ -299,7 +274,7 @@ app.get('/api/candidates', verifyToken, async (req, res) => {
 });
 
 // Get single sewing candidate (PROTECTED)
-app.get('/api/candidates/:id', verifyToken, async (req, res) => {
+app.get('/api/candidates/:id', verifySupabaseToken, async (req, res) => {
   try {
     console.log(`📋 Fetching sewing candidate: ${req.params.id}`);
     
@@ -360,7 +335,7 @@ app.get('/api/candidates/:id', verifyToken, async (req, res) => {
 // ========== UPHOLSTERY CANDIDATES ==========
 
 // Get all upholstery candidates (PROTECTED)
-app.get('/api/upholstery', verifyToken, async (req, res) => {
+app.get('/api/upholstery', verifySupabaseToken, async (req, res) => {
   try {
     console.log('📋 Fetching upholstery candidates for user:', req.user.email);
     
@@ -379,7 +354,7 @@ app.get('/api/upholstery', verifyToken, async (req, res) => {
       return res.status(400).json({ error: publicError.message });
     }
 
-    if (!publicData || publicData.length === 0) {
+    if (!Array.isArray(publicData) || publicData.length === 0) {
       return res.json([]);
     }
 
@@ -431,7 +406,7 @@ app.get('/api/upholstery', verifyToken, async (req, res) => {
 });
 
 // Get single upholstery candidate (PROTECTED)
-app.get('/api/upholstery/:id', verifyToken, async (req, res) => {
+app.get('/api/upholstery/:id', verifySupabaseToken, async (req, res) => {
   try {
     console.log(`📋 Fetching upholstery candidate: ${req.params.id}`);
     
@@ -498,8 +473,8 @@ app.use((req, res) => {
     error: 'Not Found',
     availableRoutes: [
       'GET /health',
-      'POST /api/login - Login with email/password',
-      'GET /api/profile - Get profile (requires token)',
+      'POST /api/login - Login with email/password (returns Supabase token)',
+      'GET /api/profile - Get profile (requires Supabase token)',
       'GET /api/candidates - All sewing candidates (requires token)',
       'GET /api/candidates/:id - Single sewing candidate (requires token)',
       'GET /api/upholstery - All upholstery candidates (requires token)',
