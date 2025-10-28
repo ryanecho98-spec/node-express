@@ -117,6 +117,112 @@ app.get('/health', (req, res) => {
   });
 });
 
+// ========== REGISTRATION ENDPOINT ==========
+app.post('/api/register', async (req, res) => {
+  try {
+    const {
+      email,
+      password,
+      confirmPassword,
+      accountType,
+      company,
+      postcode,
+      city,
+      county,
+      jobTitle,
+      jobDescription,
+      employmentType,
+      salaryFrom,
+      salaryTo,
+      hoursPerWeek,
+      benefits,
+      experienceRequired,
+      machines,
+      techniques
+    } = req.body;
+
+    console.log(`📝 Registration attempt: ${email} (${accountType})`);
+
+    // Validate input
+    if (!email || !password || !accountType || !company) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    if (password !== confirmPassword) {
+      return res.status(400).json({ error: 'Passwords do not match' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    if (!['sewing', 'upholstery'].includes(accountType)) {
+      return res.status(400).json({ error: 'Invalid account type' });
+    }
+
+    const supabase = accountType === 'sewing' ? supabaseSewing : supabaseUpholstery;
+
+    // 1. Create user in Supabase Auth
+    console.log(`🔐 Creating Supabase user for ${email}`);
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true
+    });
+
+    if (authError) {
+      console.error('❌ Auth error:', authError.message);
+      return res.status(400).json({ error: authError.message });
+    }
+
+    console.log(`✅ User created: ${authData.user.id}`);
+
+    // 2. Save client registration details to database
+    console.log(`💾 Saving client registration to database`);
+    const { data: regData, error: regError } = await supabase
+      .from('client_registrations')
+      .insert({
+        email,
+        company_name: company,
+        postcode,
+        city,
+        county,
+        job_title: jobTitle,
+        job_description: jobDescription,
+        employment_type: employmentType,
+        salary_from: salaryFrom,
+        salary_to: salaryTo,
+        hours_per_week: hoursPerWeek,
+        benefits,
+        experience_required: experienceRequired,
+        machines,
+        techniques,
+        account_type: accountType,
+        created_at: new Date().toISOString()
+      });
+
+    if (regError) {
+      console.error('⚠️ Registration details save error:', regError.message);
+      // Don't fail - user was created in auth, registration details are optional
+    }
+
+    console.log(`✅ Registration complete for ${email}`);
+
+    // Return success
+    res.status(201).json({
+      success: true,
+      message: 'Registration successful. You can now login.',
+      email,
+      accountType,
+      company
+    });
+
+  } catch (error) {
+    console.error('❌ Registration error:', error.message);
+    res.status(500).json({ error: 'Registration failed: ' + error.message });
+  }
+});
+
 // ========== LOGIN ENDPOINTS ==========
 
 // Login with email/password (using Supabase Auth)
@@ -473,12 +579,13 @@ app.use((req, res) => {
     error: 'Not Found',
     availableRoutes: [
       'GET /health',
+      'POST /api/register - Register new employer account',
       'POST /api/login - Login with email/password (returns Supabase token)',
       'GET /api/profile - Get profile (requires Supabase token)',
-      'GET /api/candidates - All sewing candidates (requires token)',
-      'GET /api/candidates/:id - Single sewing candidate (requires token)',
-      'GET /api/upholstery - All upholstery candidates (requires token)',
-      'GET /api/upholstery/:id - Single upholstery candidate (requires token)'
+      'GET /api/candidates - All sewing candidates (public)',
+      'GET /api/candidates/:id - Single sewing candidate (public)',
+      'GET /api/upholstery - All upholstery candidates (public)',
+      'GET /api/upholstery/:id - Single upholstery candidate (public)'
     ]
   });
 });
