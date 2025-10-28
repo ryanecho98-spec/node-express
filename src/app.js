@@ -208,7 +208,7 @@ app.get('/api/profile', verifySupabaseToken, async (req, res) => {
 // Get all sewing candidates (PUBLIC)
 app.get('/api/candidates', async (req, res) => {
   try {
-    console.log('📋 Fetching sewing candidates for user:', req.user.email);
+    console.log('📋 Fetching sewing candidates (PUBLIC endpoint)');
     
     const { data: publicData, error: publicError } = await supabaseSewing
       .from('candidates_public')
@@ -221,7 +221,7 @@ app.get('/api/candidates', async (req, res) => {
       .order('created_at', { ascending: false });
 
     if (publicError) {
-      console.error('❌ Error:', publicError);
+      console.error('❌ Supabase Error:', publicError);
       return res.status(400).json({ error: publicError.message });
     }
 
@@ -273,8 +273,8 @@ app.get('/api/candidates', async (req, res) => {
   }
 });
 
-// Get single sewing candidate (PROTECTED)
-app.get('/api/candidates/:id', verifySupabaseToken, async (req, res) => {
+// Get single sewing candidate (PUBLIC)
+app.get('/api/candidates/:id', async (req, res) => {
   try {
     console.log(`📋 Fetching sewing candidate: ${req.params.id}`);
     
@@ -334,10 +334,10 @@ app.get('/api/candidates/:id', verifySupabaseToken, async (req, res) => {
 
 // ========== UPHOLSTERY CANDIDATES ==========
 
-// Get all upholstery candidates (PROTECTED)
-app.get('/api/upholstery', verifySupabaseToken, async (req, res) => {
+// Get all upholstery candidates (PUBLIC)
+app.get('/api/upholstery', async (req, res) => {
   try {
-    console.log('📋 Fetching upholstery candidates for user:', req.user.email);
+    console.log('📋 Fetching upholstery candidates (PUBLIC endpoint)');
     
     const { data: publicData, error: publicError } = await supabaseUpholstery
       .from('upholstery_public')
@@ -405,8 +405,8 @@ app.get('/api/upholstery', verifySupabaseToken, async (req, res) => {
   }
 });
 
-// Get single upholstery candidate (PROTECTED)
-app.get('/api/upholstery/:id', verifySupabaseToken, async (req, res) => {
+// Get single upholstery candidate (PUBLIC)
+app.get('/api/upholstery/:id', async (req, res) => {
   try {
     console.log(`📋 Fetching upholstery candidate: ${req.params.id}`);
     
